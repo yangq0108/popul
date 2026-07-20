@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>도시화지역 인구밀도 지도</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --muted: #898781;
+    --border: rgba(11,11,11,0.10);
+    --accent: #92261c;
+  }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text-primary); }
+  #map { width: 100%; height: 100%; }
+  .panel {
+    position: absolute;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+    padding: 12px 14px;
+    font-size: 13px;
+    z-index: 50;
+  }
+  #title-panel {
+    top: 14px; left: 14px;
+    max-width: 280px;
+  }
+  #title-panel h1 {
+    font-size: 15px;
+    margin: 0 0 4px 0;
+  }
+  #title-panel p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  #title-panel a {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 12px;
+    color: #2a78d6;
+  }
+  #legend-panel {
+    bottom: 24px; left: 14px;
+    min-width: 190px;
+  }
+  #legend-panel .legend-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 3px 0;
+    color: var(--text-secondary);
+  }
+  .legend-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    flex: none;
+  }
+  #status-panel {
+    top: 14px; right: 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  #loading-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: #2a78d6;
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.2s ease;
+    z-index: 60;
+  }
+  .ua-label {
+    background: rgba(252,252,251,0.96);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--text-primary);
+    white-space: nowrap;
+    text-align: left;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+  }
+  .ua-label span { display: block; }
+  .ua-label .ua-name { font-weight: 700; font-size: 12px; margin-bottom: 2px; color: var(--text-primary); }
+  .ua-label .ua-density { color: var(--accent); font-weight: 600; }
+  .ua-label .ua-sub { color: var(--text-secondary); }
+  .sido-label {
+    font-size: 12.5px;
+    font-weight: 800;
+    color: #333333;
+    text-shadow: 0 0 3px #fcfcfb, 0 0 3px #fcfcfb, 0 0 3px #fcfcfb, 0 0 3px #fcfcfb;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  #theme-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  #theme-panel .theme-title {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  #theme-swatches {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .theme-swatch-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    padding: 0;
+  }
+  .theme-swatch-btn.active {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 1px;
+  }
+  #theme-custom {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+  }
+  #theme-custom input[type="color"] {
+    width: 26px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    background: none;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="loading-bar"></div>
+
+<div id="title-panel" class="panel">
+  <h1>도시화지역 인구밀도</h1>
+  <p>국토교통부/통계청 도시화지역(2025) 경계·인구 기준. 폴리곤에 마우스를 올리면 해당 도시화지역이 강조되고 시군구명·인구밀도·인구수·면적 라벨이 표시됩니다. 굵은 선은 시도 경계입니다.</p>
+  <a href="index.html">→ 집계구 기초단위 인구밀도 지도</a>
+  <a href="urbanization_timeseries.html">→ 도시화지역 시계열(2015~2025)</a>
+  <a href="data/exports/도시화지역_인구밀도_시계열.xlsx" download style="display:inline-block;margin-top:4px;font-size:12px;color:#2a78d6;">⬇ 엑셀 다운로드</a>
+  <a href="data/exports/도시화지역_인구밀도_분석보고서.docx" download style="display:inline-block;margin-top:4px;font-size:12px;color:#2a78d6;">⬇ 보고서(Word) 다운로드</a>
+</div>
+
+<div id="legend-panel" class="panel">
+  <div class="legend-title">인구밀도 (명/㎢)</div>
+  <div id="legend-rows"></div>
+  <div id="theme-panel">
+    <div class="theme-title">색상 테마</div>
+    <div id="theme-swatches"></div>
+    <div id="theme-custom">
+      <label for="theme-picker">직접 선택</label>
+      <input type="color" id="theme-picker" value="#e04b3e" />
+    </div>
+  </div>
+</div>
+
+<div id="status-panel" class="panel">데이터 로딩 준비 중...</div>
+
+<script>
+  // Sequential ramp: single hue, monotonically decreasing lightness (colorblind-
+  // safe by design - the darkest bucket is always darkest regardless of hue).
+  // The hue is user-selectable; these L/S steps are the fixed profile applied
+  // to whatever hue is chosen (this is what produced the earlier brown/red ramps).
+  var RAMP_L_STEPS = [0.89, 0.79, 0.68, 0.56, 0.45, 0.34, 0.24];
+  var RAMP_S_STEPS = [0.65, 0.68, 0.70, 0.72, 0.68, 0.68, 0.68];
+  var THEME_STORAGE_KEY = "ua_density_theme_hue";
+  var THEME_PRESETS = [
+    { hue: 5, name: "빨강" },
+    { hue: 28, name: "갈색" },
+    { hue: 140, name: "초록" },
+    { hue: 213, name: "파랑" },
+    { hue: 265, name: "보라" },
+    { hue: 190, name: "청록" },
+  ];
+
+  var COLOR_STEPS = [];
+  var NODATA_COLOR = "#e1e0d9";
+
+  function hexToHue(hex) {
+    var r = parseInt(hex.slice(1, 3), 16) / 255;
+    var g = parseInt(hex.slice(3, 5), 16) / 255;
+    var b = parseInt(hex.slice(5, 7), 16) / 255;
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    if (max === min) return 0; // achromatic input - fall back to red
+    var d = max - min, h;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+    return h;
+  }
+
+  function hslToHex(h, s, l) {
+    function f(n) {
+      var k = (n + h / 30) % 12;
+      var a = s * Math.min(l, 1 - l);
+      var c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      return Math.round(c * 255);
+    }
+    function hex2(v) { return v.toString(16).padStart(2, "0"); }
+    return "#" + hex2(f(0)) + hex2(f(8)) + hex2(f(4));
+  }
+
+  function buildRampFromHue(hue) {
+    return RAMP_L_STEPS.map(function (l, i) { return hslToHex(hue, RAMP_S_STEPS[i], l); });
+  }
+
+  function recolorFeatures() {
+    features.forEach(function (f, idx) {
+      var color = colorForValue(f.properties.density_km2, breaks.density_breaks, COLOR_STEPS);
+      (shapesByFeatureIdx[idx] || []).forEach(function (item) {
+        item.base.fillColor = color;
+        item.polygon.setOptions({ fillColor: color });
+      });
+    });
+  }
+
+  function applyTheme(hue, opts) {
+    opts = opts || {};
+    COLOR_STEPS = buildRampFromHue(hue);
+    var accent = COLOR_STEPS[5];
+    document.documentElement.style.setProperty("--accent", accent);
+
+    if (breaks) buildLegend(breaks.density_breaks, COLOR_STEPS);
+    if (features.length) recolorFeatures();
+
+    document.querySelectorAll(".theme-swatch-btn").forEach(function (btn) {
+      btn.classList.toggle("active", Number(btn.dataset.hue) === hue);
+    });
+    document.getElementById("theme-picker").value = hslToHex(hue, 0.7, 0.5);
+
+    if (opts.persist !== false) localStorage.setItem(THEME_STORAGE_KEY, String(hue));
+  }
+
+  function setupThemeControls() {
+    var wrap = document.getElementById("theme-swatches");
+    THEME_PRESETS.forEach(function (preset) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "theme-swatch-btn";
+      btn.title = preset.name;
+      btn.dataset.hue = preset.hue;
+      btn.style.background = hslToHex(preset.hue, 0.7, 0.5);
+      btn.addEventListener("click", function () { applyTheme(preset.hue); });
+      wrap.appendChild(btn);
+    });
+
+    document.getElementById("theme-picker").addEventListener("input", function (e) {
+      applyTheme(hexToHue(e.target.value));
+    });
+  }
+
+  function initialThemeHue() {
+    var stored = Number(localStorage.getItem(THEME_STORAGE_KEY));
+    return isNaN(stored) ? 5 : stored;
+  }
+
+  var map, breaks = null, features = [];
+  var baseLayer = [];            // all polygons, built once
+  var shapesByFeatureIdx = {};   // featureIdx -> [{polygon, base}, ...] (multi-part features)
+  var hoverLabelMarker = null;
+  var currentHoverIdx = null;
+  var sidoOutlineLayer = [];     // bold sido boundary lines, built once
+  var sidoLabelLayer = [];       // small always-on sido name markers
+
+  function setStatus(text) {
+    document.getElementById("status-panel").textContent = text;
+  }
+
+  function showLoading(active) {
+    document.getElementById("loading-bar").style.transform = active ? "scaleX(1)" : "scaleX(0)";
+  }
+
+  function fmtInt(n) {
+    if (n === null || n === undefined || isNaN(n)) return "N/A";
+    return Math.round(n).toLocaleString("ko-KR");
+  }
+
+  function colorForValue(value, allBreaks, steps) {
+    if (value === null || value === undefined || isNaN(value)) return NODATA_COLOR;
+    for (var i = 0; i < allBreaks.length; i++) {
+      if (value <= allBreaks[i]) return steps[i];
+    }
+    return steps[steps.length - 1];
+  }
+
+  function buildLegend(allBreaks, steps) {
+    var rows = document.getElementById("legend-rows");
+    rows.innerHTML = "";
+    var lower = 0;
+    for (var i = 0; i < steps.length; i++) {
+      var upper = allBreaks[i];
+      var label = (i === steps.length - 1)
+        ? fmtInt(lower) + " 이상"
+        : fmtInt(lower) + " ~ " + fmtInt(upper);
+      var row = document.createElement("div");
+      row.className = "legend-row";
+      row.innerHTML = '<span class="legend-swatch" style="background:' + steps[i] + '"></span><span>' + label + "</span>";
+      rows.appendChild(row);
+      lower = upper;
+    }
+  }
+
+  function labelHtml(p) {
+    var nameLine = [p.sido_nm, p.sgg_nm].filter(Boolean).join(" ") + (p.ua_nm ? " · " + p.ua_nm : "");
+    return '<div class="ua-label">' +
+      '<span class="ua-name">' + nameLine + "</span>" +
+      '<span class="ua-density">인구밀도 ' + fmtInt(p.density_km2) + " 명/㎢</span>" +
+      '<span class="ua-sub">인구수 ' + fmtInt(p.ingu_cnt) + "명 · 면적 " + (p.area_km2 != null ? p.area_km2.toFixed(2) : "N/A") + "㎢</span>" +
+      "</div>";
+  }
+
+  function showLabel(pos, props) {
+    var icon = { content: labelHtml(props), anchor: new naver.maps.Point(-10, 30) };
+    if (!hoverLabelMarker) {
+      hoverLabelMarker = new naver.maps.Marker({ position: pos, map: map, icon: icon, zIndex: 200 });
+    } else {
+      hoverLabelMarker.setPosition(pos);
+      hoverLabelMarker.setIcon(icon);
+      hoverLabelMarker.setMap(map);
+    }
+  }
+
+  function hideLabel() {
+    if (hoverLabelMarker) hoverLabelMarker.setMap(null);
+  }
+
+  function highlightFeature(idx) {
+    (shapesByFeatureIdx[idx] || []).forEach(function (item) {
+      item.polygon.setOptions({
+        strokeWeight: (item.base.strokeWeight || 0) + 2,
+        strokeColor: "#0b0b0b",
+        fillOpacity: Math.min(1, item.base.fillOpacity + 0.15),
+      });
+    });
+  }
+
+  function unhighlightFeature(idx) {
+    (shapesByFeatureIdx[idx] || []).forEach(function (item) {
+      item.polygon.setOptions(item.base);
+    });
+  }
+
+  function onFeatureHover(idx, props, coord) {
+    if (currentHoverIdx !== null && currentHoverIdx !== idx) unhighlightFeature(currentHoverIdx);
+    currentHoverIdx = idx;
+    highlightFeature(idx);
+    showLabel(coord, props);
+  }
+
+  function onFeatureUnhover(idx) {
+    if (currentHoverIdx === idx) currentHoverIdx = null;
+    unhighlightFeature(idx);
+    hideLabel();
+  }
+
+  function registerShape(idx, polygon, baseOptions) {
+    if (!shapesByFeatureIdx[idx]) shapesByFeatureIdx[idx] = [];
+    shapesByFeatureIdx[idx].push({ polygon: polygon, base: baseOptions });
+  }
+
+  function addFeatureToMap(feature, idx) {
+    var props = feature.properties;
+    var color = colorForValue(props.density_km2, breaks.density_breaks, COLOR_STEPS);
+    var coords = feature.geometry.type === "Polygon"
+      ? [feature.geometry.coordinates]
+      : feature.geometry.coordinates; // MultiPolygon
+
+    coords.forEach(function (poly) {
+      var paths = poly.map(function (ring) {
+        return ring.map(function (c) { return new naver.maps.LatLng(c[1], c[0]); });
+      });
+      var baseOptions = {
+        fillColor: color,
+        fillOpacity: 0.75,
+        strokeColor: "#ffffff",
+        strokeOpacity: 0.6,
+        strokeWeight: 0.6,
+      };
+      var polygon = new naver.maps.Polygon(Object.assign({ map: map, paths: paths, clickable: true, zIndex: 10 }, baseOptions));
+      registerShape(idx, polygon, baseOptions);
+      naver.maps.Event.addListener(polygon, "mouseover", function (e) {
+        onFeatureHover(idx, props, e.coord);
+      });
+      naver.maps.Event.addListener(polygon, "mouseout", function () {
+        onFeatureUnhover(idx);
+      });
+      baseLayer.push(polygon);
+    });
+  }
+
+  function renderSidoBoundaries(sidoFeatures) {
+    sidoFeatures.forEach(function (feat) {
+      var coords = feat.geometry.type === "Polygon"
+        ? [feat.geometry.coordinates]
+        : feat.geometry.coordinates; // MultiPolygon
+
+      var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      coords.forEach(function (poly) {
+        var paths = poly.map(function (ring) {
+          return ring.map(function (c) {
+            if (c[1] < minLat) minLat = c[1];
+            if (c[1] > maxLat) maxLat = c[1];
+            if (c[0] < minLng) minLng = c[0];
+            if (c[0] > maxLng) maxLng = c[0];
+            return new naver.maps.LatLng(c[1], c[0]);
+          });
+        });
+        // Halo/casing technique: a wide light stroke underneath a thinner dark
+        // one on top, so the boundary reads clearly against both light and
+        // dark choropleth fills (a plain dashed line disappeared over the
+        // darker density colors and was hard to follow at low zoom).
+        var halo = new naver.maps.Polygon({
+          map: map,
+          paths: paths,
+          fillOpacity: 0,
+          strokeColor: "#ffffff",
+          strokeOpacity: 0.9,
+          strokeWeight: 6,
+          strokeStyle: "solid",
+          clickable: false,
+          zIndex: 19,
+        });
+        var polygon = new naver.maps.Polygon({
+          map: map,
+          paths: paths,
+          fillOpacity: 0,
+          strokeColor: "#1a1a1a",
+          strokeOpacity: 1,
+          strokeWeight: 2.5,
+          strokeStyle: "solid",
+          clickable: false,
+          zIndex: 20,
+        });
+        sidoOutlineLayer.push(halo, polygon);
+      });
+
+      var label = new naver.maps.Marker({
+        position: new naver.maps.LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2),
+        map: map,
+        icon: { content: '<div class="sido-label">' + feat.properties.sido_nm + "</div>", anchor: new naver.maps.Point(0, 0) },
+        zIndex: 30,
+      });
+      sidoLabelLayer.push(label);
+    });
+  }
+
+  function renderAll() {
+    setStatus("도시화지역 " + features.length.toLocaleString("ko-KR") + "개 그리는 중...");
+    showLoading(true);
+    // Render in chunks so the tab doesn't freeze while building ~1,000 polygons.
+    var CHUNK = 80;
+    var i = 0;
+    function step() {
+      var end = Math.min(i + CHUNK, features.length);
+      for (; i < end; i++) addFeatureToMap(features[i], i);
+      if (i < features.length) {
+        setTimeout(step, 0);
+      } else {
+        showLoading(false);
+        setStatus("도시화지역 " + features.length.toLocaleString("ko-KR") + "개 표시 중");
+      }
+    }
+    step();
+  }
+
+  function initMapReal() {
+    map = new naver.maps.Map("map", {
+      center: new naver.maps.LatLng(36.5, 127.85),
+      zoom: 7,
+      minZoom: 6,
+      maxZoom: 18,
+    });
+
+    setupThemeControls();
+    applyTheme(initialThemeHue(), { persist: false });
+
+    Promise.all([
+      fetch("data/urbanization_areas.geojson").then(function (r) { return r.json(); }),
+      fetch("data/urbanization_breaks.json").then(function (r) { return r.json(); }),
+      fetch("data/sido_boundaries.geojson").then(function (r) { return r.json(); }),
+    ]).then(function (results) {
+      features = results[0].features;
+      breaks = results[1];
+      buildLegend(breaks.density_breaks, COLOR_STEPS);
+      renderSidoBoundaries(results[2].features);
+      renderAll();
+    }).catch(function (err) {
+      setStatus("데이터 로딩 실패: " + err);
+      console.error(err);
+    });
+  }
+
+  function initMap() {
+    var attempts = 0;
+    (function waitForNaver() {
+      if (window.naver && window.naver.maps) {
+        setStatus("네이버지도 SDK 로드 완료, 지도 생성 중...");
+        try {
+          initMapReal();
+        } catch (e) {
+          setStatus("지도 생성 중 오류: " + e.message);
+          console.error(e);
+        }
+        return;
+      }
+      attempts++;
+      if (attempts > 50) {
+        setStatus("네이버지도 SDK(window.naver)가 끝내 정의되지 않았습니다. maps.js 응답이 손상되었을 수 있습니다.");
+        return;
+      }
+      setStatus("네이버지도 SDK 초기화 대기 중... (" + attempts + ")");
+      setTimeout(waitForNaver, 100);
+    })();
+  }
+
+  window.navermap_authFailure = function () {
+    setStatus("네이버지도 인증 실패 - Client ID 및 웹 서비스 URL 등록을 확인하세요");
+  };
+
+  window.addEventListener("error", function (e) {
+    setStatus("스크립트 오류: " + e.message + " (" + (e.filename || "").split("/").pop() + ":" + e.lineno + ")");
+  });
+</script>
+<script type="text/javascript" src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=vnbtz9aalt&callback=initMap"></script>
+<script>
+  setTimeout(function () {
+    if (!map) {
+      console.warn("callback=initMap never fired by maps.js; invoking manually as fallback");
+      initMap();
+    }
+  }, 4000);
+</script>
+</body>
+</html>

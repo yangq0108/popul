@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>집계구 인구밀도 지도</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --muted: #898781;
+    --border: rgba(11,11,11,0.10);
+  }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text-primary); }
+  #map { width: 100%; height: 100%; }
+  .panel {
+    position: absolute;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+    padding: 12px 14px;
+    font-size: 13px;
+    z-index: 50;
+  }
+  #title-panel {
+    top: 14px; left: 14px;
+    max-width: 260px;
+  }
+  #title-panel h1 {
+    font-size: 15px;
+    margin: 0 0 4px 0;
+  }
+  #title-panel p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  #legend-panel {
+    bottom: 24px; left: 14px;
+    min-width: 190px;
+  }
+  #legend-panel .legend-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 3px 0;
+    color: var(--text-secondary);
+  }
+  .legend-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    flex: none;
+  }
+  .green-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+  .green-toggle-row input { margin: 0; cursor: pointer; }
+  .green-toggle-row:has(input:disabled) { color: #c3c2b7; cursor: not-allowed; }
+  .green-toggle-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    background: #008300;
+    flex: none;
+  }
+  #census-toggle-row { margin-top: 6px; padding-top: 0; border-top: none; }
+  .census-hint { font-size: 11px; color: #a45a1a; margin-top: 2px; }
+  #status-panel {
+    top: 14px; right: 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  #loading-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: #2a78d6;
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.2s ease;
+    z-index: 60;
+  }
+  .sgg-label {
+    background: rgba(252,252,251,0.94);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 7px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: nowrap;
+    text-align: left;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    cursor: pointer;
+  }
+  .sgg-label span { display: block; }
+  .sgg-label .sgg-name { font-weight: 700; font-size: 11px; margin-bottom: 1px; color: var(--text-primary); }
+  .sgg-label .builtup { color: #184f95; }
+  .sgg-label .green { color: #008300; }
+  .sgg-label .nonurban { color: #a45a1a; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="loading-bar"></div>
+
+<div id="title-panel" class="panel">
+  <h1>집계구 기초단위 인구밀도</h1>
+  <p>통계청 SGIS 집계구 경계·인구통계(2024) 기반. 시군구에 마우스를 올리면 인구밀도 라벨이 표시됩니다. 집계구 경계는 좌하단 체크박스로 켤 수 있으며, 충분히 확대해야 활성화됩니다.</p>
+  <a href="urbanization_density.html" style="display:inline-block;margin-top:8px;font-size:12px;color:#2a78d6;">→ 도시화지역 인구밀도 지도</a>
+  <a href="urbanization_timeseries.html" style="display:inline-block;margin-top:4px;font-size:12px;color:#2a78d6;">→ 도시화지역 시계열(2015~2025)</a>
+  <a href="data/exports/도시화지역_인구밀도_시계열.xlsx" download style="display:inline-block;margin-top:4px;font-size:12px;color:#2a78d6;">⬇ 엑셀 다운로드</a>
+  <a href="data/exports/도시화지역_인구밀도_분석보고서.docx" download style="display:inline-block;margin-top:4px;font-size:12px;color:#2a78d6;">⬇ 보고서(Word) 다운로드</a>
+</div>
+
+<div id="legend-panel" class="panel">
+  <div class="legend-title" id="legend-title">인구밀도 (명/㎢)</div>
+  <div id="legend-rows"></div>
+  <label class="green-toggle-row">
+    <input type="checkbox" id="green-toggle" />
+    <span class="green-toggle-swatch"></span> 녹지지역 색칠 표시
+  </label>
+  <label class="green-toggle-row" id="census-toggle-row">
+    <input type="checkbox" id="census-toggle" />
+    집계구 경계 표시
+  </label>
+  <div id="census-toggle-hint" class="census-hint"></div>
+</div>
+
+<div id="status-panel" class="panel">데이터 로딩 준비 중...</div>
+
+<script>
+  // ---- sequential blue ramp (dataviz skill reference palette) ----
+  var COLOR_STEPS = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
+  var SGG_COLOR_STEPS = COLOR_STEPS; // same ramp reused for low-zoom aggregate view
+
+  // landuse_tiles now ship only 2 rendered categories (pre-merged/simplified server-side):
+  // "builtup" (주거+상업+공업, density-colored) and "green" (녹지, fixed color).
+  // Everything else (관리/농림/자연환경보전/미지정) was dropped at build time - never
+  // rendered, stays transparent.
+  var GREEN_FILL_COLOR = "#008300"; // dataviz palette green - fixed, not density-scaled
+  // Green-zone polygons are the slowest thing to render (often the most complex
+  // boundaries in a sigungu), so they're opt-in via a checkbox, off by default.
+  var showGreen = false;
+
+  // Sigungu outlines/labels/mask are always visible regardless of zoom. Census
+  // output area detail is a global on/off (like the green toggle) rather than
+  // per-sigungu, but it's only ever actually rendered once zoomed in past
+  // MIN_CENSUS_ZOOM - a whole-country view has 100k+ census polygons, far too
+  // many to draw at once, so the checkbox is disabled below that zoom.
+  var MASK_MAX_VISIBLE_SGG = 40;
+  var MIN_CENSUS_ZOOM = 14;
+  var showCensus = false;
+
+  var map, breaks = null, sggSummary = [], tileIndexByCd = {};
+  var sggBoundaryFeatures = [];       // sgg_boundaries.geojson features
+  var landuseTilesByCd = {};
+  var loadedTileCds = new Set();
+  var loadedLanduseCds = new Set();
+  var polygonLayer = [];      // census-output-area polygons currently on screen
+  var sggOutlineLayer = [];   // bold, unfilled sigungu boundary outlines (built once, never viewport-dependent)
+  var landusePolygonLayer = []; // colored builtup/green mask polygons (viewport-loaded)
+  var hoverLabelMarker = null; // single marker showing name+density label for whichever sigungu is under the cursor
+  var sggShapesByCd = {};      // sgg_cd -> [{polygon, baseOptions}, ...] for the (built-once) outlines
+  var maskShapesByCd = {};     // sgg_cd -> [{polygon, baseOptions}, ...] for the (viewport-rebuilt) mask polygons
+  var outlinesBuilt = false;
+
+  function getSggShapes(sgg_cd) {
+    return (sggShapesByCd[sgg_cd] || []).concat(maskShapesByCd[sgg_cd] || []);
+  }
+
+  function setStatus(text) {
+    document.getElementById("status-panel").textContent = text;
+  }
+
+  function showLoading(active) {
+    document.getElementById("loading-bar").style.transform = active ? "scaleX(1)" : "scaleX(0)";
+  }
+
+  function colorForValue(value, allBreaks, steps) {
+    if (value === null || value === undefined || isNaN(value)) return "#e1e0d9";
+    for (var i = 0; i < allBreaks.length; i++) {
+      if (value <= allBreaks[i]) return steps[i];
+    }
+    return steps[steps.length - 1];
+  }
+
+  function fmtInt(n) {
+    if (n === null || n === undefined || isNaN(n)) return "N/A";
+    return Math.round(n).toLocaleString("ko-KR");
+  }
+
+  // "12,345 명/㎢ [528,194명/36.01㎢]" - density plus the raw population/area it came from.
+  function fmtDensityDetail(density, ppltn, areaKm2, areaDecimals) {
+    var detail = (ppltn !== null && ppltn !== undefined && areaKm2)
+      ? " [" + fmtInt(ppltn) + "명/" + areaKm2.toFixed(areaDecimals || 2) + "㎢]"
+      : "";
+    return fmtInt(density) + " 명/㎢" + detail;
+  }
+
+  function buildLegend(allBreaks, steps, unitSuffix) {
+    var rows = document.getElementById("legend-rows");
+    rows.innerHTML = "";
+    var lower = 0;
+    for (var i = 0; i < steps.length; i++) {
+      var upper = allBreaks[i];
+      var label;
+      if (i === steps.length - 1) {
+        label = fmtInt(lower) + (unitSuffix || "") + " 이상";
+      } else {
+        label = fmtInt(lower) + " ~ " + fmtInt(upper);
+      }
+      var row = document.createElement("div");
+      row.className = "legend-row";
+      row.innerHTML = '<span class="legend-swatch" style="background:' + steps[i] + '"></span><span>' + label + "</span>";
+      rows.appendChild(row);
+      lower = upper;
+    }
+  }
+
+  function clearLayer(layerArr) {
+    layerArr.forEach(function (obj) { obj.setMap(null); });
+    layerArr.length = 0;
+  }
+
+  function sggLabelHtml(s) {
+    return '<div class="sgg-label">' +
+      '<span class="sgg-name">' + s.sido_nm + " " + s.sgg_nm + "</span>" +
+      '<span class="builtup">도시 ' + fmtDensityDetail(s.builtup_avg_density_km2, s.builtup_total_ppltn, s.builtup_total_area_km2) + "</span>" +
+      '<span class="green">녹지 ' + fmtDensityDetail(s.green_avg_density_km2, s.green_total_ppltn, s.green_total_area_km2) + "</span>" +
+      '<span class="nonurban">비도시 ' + fmtDensityDetail(s.nonurban_avg_density_km2, s.nonurban_total_ppltn, s.nonurban_total_area_km2) + "</span>" +
+      "</div>";
+  }
+
+  // Only one label is ever shown at a time - whichever sigungu the cursor is
+  // currently over - rather than 252 always-on labels cluttering the map.
+  function showSggLabel(s) {
+    if (!s.center) return;
+    var pos = new naver.maps.LatLng(s.center[1], s.center[0]);
+    var icon = { content: sggLabelHtml(s), anchor: new naver.maps.Point(0, 0) };
+    if (!hoverLabelMarker) {
+      hoverLabelMarker = new naver.maps.Marker({ position: pos, map: map, icon: icon });
+    } else {
+      hoverLabelMarker.setPosition(pos);
+      hoverLabelMarker.setIcon(icon);
+      hoverLabelMarker.setMap(map);
+    }
+  }
+
+  function hideSggLabel() {
+    if (hoverLabelMarker) hoverLabelMarker.setMap(null);
+  }
+
+  function registerSggShape(registry, sgg_cd, polygon, baseOptions) {
+    if (!registry[sgg_cd]) registry[sgg_cd] = [];
+    registry[sgg_cd].push({ polygon: polygon, base: baseOptions });
+  }
+
+  // Hovering highlights every shape belonging to that sigungu (its outline AND
+  // any builtup/green mask pieces) together, not just whichever one the cursor
+  // happened to land on.
+  function highlightSgg(sgg_cd) {
+    getSggShapes(sgg_cd).forEach(function (item) {
+      item.polygon.setOptions({ strokeWeight: (item.base.strokeWeight || 0) + 2, fillOpacity: Math.min(1, item.base.fillOpacity + 0.2) });
+    });
+  }
+
+  function unhighlightSgg(sgg_cd) {
+    getSggShapes(sgg_cd).forEach(function (item) {
+      item.polygon.setOptions(item.base);
+    });
+  }
+
+  function onSggHover(s) {
+    showSggLabel(s);
+    highlightSgg(s.sgg_cd);
+  }
+
+  function onSggUnhover(s) {
+    hideSggLabel();
+    unhighlightSgg(s.sgg_cd);
+  }
+
+  // Built once (not on every pan/zoom): bold, unfilled sigungu outlines. These
+  // don't depend on the viewport at all, so recreating all 252 on every idle
+  // event (as an earlier version did) was pure wasted work and a big source of
+  // the sluggishness. Hovering shows that sigungu's label and highlights it.
+  function renderSggOutlines(summaryByCd) {
+    if (outlinesBuilt) return;
+    outlinesBuilt = true;
+
+    sggBoundaryFeatures.forEach(function (feat) {
+      var s = summaryByCd[feat.properties.sgg_cd];
+      if (!s) return;
+      var coords = feat.geometry.type === "Polygon" ? [feat.geometry.coordinates] : feat.geometry.coordinates;
+      coords.forEach(function (poly) {
+        var paths = poly.map(function (ring) {
+          return ring.map(function (c) { return new naver.maps.LatLng(c[1], c[0]); });
+        });
+        var baseOptions = {
+          fillColor: "#000000",
+          // Naver Maps (like most map SDKs) skips mouse hit-testing on a fill
+          // that's exactly 0 opacity, so a genuinely invisible fill (0.01) is
+          // used here instead of 0 - otherwise hover only fires over the thin
+          // stroke line, never the sigungu's (mostly non-urban) interior.
+          fillOpacity: 0.01,
+          strokeColor: "#0b0b0b",
+          strokeOpacity: 0.75,
+          strokeWeight: 2.5,
+        };
+        var polygon = new naver.maps.Polygon(Object.assign({ map: map, paths: paths, clickable: true }, baseOptions));
+        registerSggShape(sggShapesByCd, s.sgg_cd, polygon, baseOptions);
+        naver.maps.Event.addListener(polygon, "mouseover", function () { onSggHover(s); });
+        naver.maps.Event.addListener(polygon, "mouseout", function () { onSggUnhover(s); });
+        sggOutlineLayer.push(polygon);
+      });
+    });
+  }
+
+  // Land-use mask fill: "builtup" (주거+상업+공업) colored by that sigungu's
+  // builtup avg density; "green" (녹지) always a fixed green regardless of density,
+  // since green-space population is inherently near zero and a density-based color
+  // there would just read as "lowest bucket" everywhere. Everything else (관리·농림
+  // 등, never shipped to the client) stays transparent. Viewport-loaded.
+  function renderLanduseMask(visibleSgg, currentBounds, summaryByCd) {
+    var toFetch = visibleSgg.filter(function (s) { return !loadedLanduseCds.has(s.sgg_cd); });
+    var fetches = toFetch.map(function (s) {
+      return fetch("data/landuse_tiles/" + s.sgg_cd + ".geojson")
+        .then(function (r) { return r.ok ? r.json() : { type: "FeatureCollection", features: [] }; })
+        .then(function (fc) { landuseTilesByCd[s.sgg_cd] = fc; loadedLanduseCds.add(s.sgg_cd); })
+        .catch(function () { landuseTilesByCd[s.sgg_cd] = { type: "FeatureCollection", features: [] }; loadedLanduseCds.add(s.sgg_cd); });
+    });
+
+    Promise.all(fetches).then(function () {
+      clearLayer(landusePolygonLayer);
+      maskShapesByCd = {};
+      visibleSgg.forEach(function (s) {
+        var fc = landuseTilesByCd[s.sgg_cd];
+        if (!fc) return;
+        var builtupColor = colorForValue(s.builtup_avg_density_km2, breaks.builtup_sgg_breaks, COLOR_STEPS);
+        fc.features.forEach(function (f) {
+          if (f.properties.category === "green" && !showGreen) return;
+          if (!bboxIntersects(featureBbox(f.geometry), currentBounds)) return;
+          var color = f.properties.category === "green" ? GREEN_FILL_COLOR : builtupColor;
+          addLanduseMaskFeatureToMap(f, color, s);
+        });
+      });
+      buildLegend(breaks.builtup_sgg_breaks, COLOR_STEPS);
+    });
+  }
+
+  // Census-output-area detail, gated behind the "집계구 경계 표시" checkbox AND a
+  // minimum zoom (a whole-country view has 100k+ polygons - far too many to
+  // draw). Viewport-based with per-feature bbox culling, same as the mask.
+  // Returns true if it actually rendered (so renderSummary knows to skip the mask).
+  function renderCensusIfActive(visibleSgg, currentBounds) {
+    var checkbox = document.getElementById("census-toggle");
+    var hint = document.getElementById("census-toggle-hint");
+    var zoomOk = map.getZoom() >= MIN_CENSUS_ZOOM;
+    checkbox.disabled = !zoomOk;
+    hint.textContent = zoomOk ? "" : "더 확대해야 집계구 표시를 켤 수 있습니다";
+
+    if (!showCensus || !zoomOk) {
+      clearLayer(polygonLayer);
+      return false;
+    }
+    if (visibleSgg.length === 0) {
+      clearLayer(polygonLayer);
+      return true;
+    }
+    if (visibleSgg.length > MASK_MAX_VISIBLE_SGG) {
+      clearLayer(polygonLayer);
+      setStatus("범위가 너무 넓습니다 (" + visibleSgg.length + "개 시군구) · 더 확대해주세요");
+      return true;
+    }
+
+    setStatus("집계구 상세 로딩 중... (" + visibleSgg.length + "개 시군구 영역)");
+    showLoading(true);
+    var toFetch = visibleSgg.filter(function (s) { return !loadedTileCds.has(s.sgg_cd); });
+    var fetches = toFetch.map(function (s) {
+      return fetch("data/tiles/" + s.sgg_cd + ".geojson")
+        .then(function (r) { return r.json(); })
+        .then(function (fc) { tileIndexByCd[s.sgg_cd] = fc; loadedTileCds.add(s.sgg_cd); })
+        .catch(function (err) { console.error("tile load failed", s.sgg_cd, err); });
+    });
+
+    Promise.all(fetches).then(function () {
+      clearLayer(polygonLayer);
+      var currentBounds2 = map.getBounds(); // re-read: user may have moved slightly during fetch
+      var count = 0;
+      visibleSgg.forEach(function (s) {
+        var fc = tileIndexByCd[s.sgg_cd];
+        if (!fc) return;
+        fc.features.forEach(function (f) {
+          if (!bboxIntersects(featureBbox(f.geometry), currentBounds2)) return;
+          addFeatureToMap(f);
+          count++;
+        });
+      });
+      showLoading(false);
+      setStatus("집계구 " + count.toLocaleString("ko-KR") + "개 표시 중");
+    });
+    return true;
+  }
+
+  function renderSummary() {
+    var summaryByCd = {};
+    sggSummary.forEach(function (s) { summaryByCd[s.sgg_cd] = s; });
+
+    renderSggOutlines(summaryByCd);
+
+    var bounds = map.getBounds();
+    var visible = sggSummary.filter(function (s) { return bboxIntersects(s.bbox, bounds); });
+    var censusShown = renderCensusIfActive(visible, bounds);
+
+    if (censusShown) {
+      clearLayer(landusePolygonLayer);
+      document.getElementById("legend-title").textContent = "인구밀도 (명/㎢)";
+      buildLegend(breaks.census_breaks, COLOR_STEPS);
+      return;
+    }
+
+    if (visible.length === 0 || visible.length > MASK_MAX_VISIBLE_SGG) {
+      clearLayer(landusePolygonLayer);
+      document.getElementById("legend-title").textContent = "도시지역(녹지제외) 평균 인구밀도 (명/㎢) - 더 확대하면 색칠 표시";
+      document.getElementById("legend-rows").innerHTML = "";
+    } else {
+      document.getElementById("legend-title").textContent = "도시지역(녹지제외) 평균 인구밀도 (명/㎢)" + (showGreen ? " · 녹지는 고정 초록색" : "");
+      renderLanduseMask(visible, bounds, summaryByCd);
+    }
+    setStatus("시군구 도시" + (showGreen ? "/녹지" : "") + " 평균 밀도 표시 중");
+  }
+
+  function featureColor(props) {
+    return colorForValue(props.density_km2, breaks.census_breaks, COLOR_STEPS);
+  }
+
+  function addFeatureToMap(feature) {
+    var coords = feature.geometry.type === "Polygon"
+      ? [feature.geometry.coordinates]
+      : feature.geometry.coordinates; // MultiPolygon
+
+    coords.forEach(function (poly) {
+      var paths = poly.map(function (ring) {
+        return ring.map(function (c) { return new naver.maps.LatLng(c[1], c[0]); });
+      });
+      var props = feature.properties;
+      var polygon = new naver.maps.Polygon({
+        map: map,
+        paths: paths,
+        fillColor: featureColor(props),
+        fillOpacity: 0.75,
+        strokeColor: "#ffffff",
+        strokeOpacity: 0.6,
+        strokeWeight: 0.5,
+      });
+      polygonLayer.push(polygon);
+    });
+  }
+
+  function bboxIntersects(bbox, bounds) {
+    if (!bbox) return false;
+    var sw = bounds.getSW(), ne = bounds.getNE();
+    return !(bbox[2] < sw.lng() || bbox[0] > ne.lng() || bbox[3] < sw.lat() || bbox[1] > ne.lat());
+  }
+
+  function featureBbox(geometry) {
+    var rings = geometry.type === "Polygon" ? geometry.coordinates : geometry.coordinates.reduce(function (a, p) { return a.concat(p); }, []);
+    var minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+    rings.forEach(function (ring) {
+      ring.forEach(function (c) {
+        if (c[0] < minLon) minLon = c[0];
+        if (c[0] > maxLon) maxLon = c[0];
+        if (c[1] < minLat) minLat = c[1];
+        if (c[1] > maxLat) maxLat = c[1];
+      });
+    });
+    return [minLon, minLat, maxLon, maxLat];
+  }
+
+  function addLanduseMaskFeatureToMap(feature, color, s) {
+    var coords = feature.geometry.type === "Polygon"
+      ? [feature.geometry.coordinates]
+      : feature.geometry.coordinates;
+
+    coords.forEach(function (poly) {
+      var paths = poly.map(function (ring) {
+        return ring.map(function (c) { return new naver.maps.LatLng(c[1], c[0]); });
+      });
+      var baseOptions = {
+        fillColor: color,
+        fillOpacity: 0.75,
+        strokeColor: color,
+        strokeOpacity: 0,
+        strokeWeight: 0,
+      };
+      var polygon = new naver.maps.Polygon(Object.assign({ map: map, paths: paths, clickable: true }, baseOptions));
+      registerSggShape(maskShapesByCd, s.sgg_cd, polygon, baseOptions);
+      naver.maps.Event.addListener(polygon, "mouseover", function () { onSggHover(s); });
+      naver.maps.Event.addListener(polygon, "mouseout", function () { onSggUnhover(s); });
+      landusePolygonLayer.push(polygon);
+    });
+  }
+
+  function setupGreenToggle() {
+    var checkbox = document.getElementById("green-toggle");
+    checkbox.checked = showGreen;
+    checkbox.addEventListener("change", function () {
+      showGreen = checkbox.checked;
+      renderSummary();
+    });
+  }
+
+  function setupCensusToggle() {
+    var checkbox = document.getElementById("census-toggle");
+    checkbox.checked = showCensus;
+    checkbox.addEventListener("change", function () {
+      showCensus = checkbox.checked;
+      renderSummary();
+    });
+  }
+
+  function onMapIdle() {
+    // re-derives visible sigungu from the current viewport every time, so this
+    // must run on every idle (pan or zoom), not just on mode transitions.
+    renderSummary();
+  }
+
+  function initMapReal() {
+    map = new naver.maps.Map("map", {
+      center: new naver.maps.LatLng(36.5, 127.85),
+      zoom: 7,
+      minZoom: 6,
+      maxZoom: 18,
+    });
+
+    setupGreenToggle();
+    setupCensusToggle();
+
+    Promise.all([
+      fetch("data/tile_index.json").then(function (r) { return r.json(); }),
+      fetch("data/density_breaks.json").then(function (r) { return r.json(); }),
+      fetch("data/sgg_boundaries.geojson").then(function (r) { return r.json(); }),
+    ]).then(function (results) {
+      sggSummary = results[0];
+      breaks = results[1];
+      sggBoundaryFeatures = results[2].features;
+      naver.maps.Event.addListener(map, "idle", onMapIdle);
+      onMapIdle();
+    }).catch(function (err) {
+      setStatus("데이터 로딩 실패: " + err);
+      console.error(err);
+    });
+  }
+
+  // The naver.maps.js loader is expected to call this once window.naver is ready.
+  // Under some corporate proxies the script tag reports success (200) but the
+  // callback can still fire a tick early, so poll briefly before giving up.
+  function initMap() {
+    var attempts = 0;
+    (function waitForNaver() {
+      if (window.naver && window.naver.maps) {
+        setStatus("네이버지도 SDK 로드 완료, 지도 생성 중...");
+        try {
+          initMapReal();
+        } catch (e) {
+          setStatus("지도 생성 중 오류: " + e.message);
+          console.error(e);
+        }
+        return;
+      }
+      attempts++;
+      if (attempts > 50) { // ~5s
+        setStatus("네이버지도 SDK(window.naver)가 끝내 정의되지 않았습니다. maps.js 응답이 손상되었을 수 있습니다.");
+        return;
+      }
+      setStatus("네이버지도 SDK 초기화 대기 중... (" + attempts + ")");
+      setTimeout(waitForNaver, 100);
+    })();
+  }
+
+  window.navermap_authFailure = function () {
+    setStatus("네이버지도 인증 실패 - Client ID 및 웹 서비스 URL 등록을 확인하세요");
+  };
+
+  window.addEventListener("error", function (e) {
+    setStatus("스크립트 오류: " + e.message + " (" + (e.filename || "").split("/").pop() + ":" + e.lineno + ")");
+  });
+</script>
+<script type="text/javascript" src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=vnbtz9aalt&callback=initMap"></script>
+<script>
+  // Fallback: if the SDK's own callback mechanism never fires at all (script blocked,
+  // corrupted, or callback param unsupported by this build), try after a timeout.
+  setTimeout(function () {
+    if (!map) {
+      console.warn("callback=initMap never fired by maps.js; invoking manually as fallback");
+      initMap();
+    }
+  }, 4000);
+</script>
+</body>
+</html>
