@@ -47,11 +47,34 @@
   #legend-panel {
     bottom: 24px; left: 14px;
     min-width: 190px;
+    max-width: calc(100vw - 28px);
+    box-sizing: border-box;
+  }
+  #legend-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
   }
   #legend-panel .legend-title {
     font-weight: 600;
     margin-bottom: 8px;
   }
+  #legend-header .legend-title { margin-bottom: 0; }
+  #legend-toggle {
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 6px;
+    width: 24px;
+    height: 24px;
+    line-height: 1;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    flex: none;
+  }
+  #legend-panel.collapsed #legend-body { display: none; }
+  #legend-panel.collapsed { padding-bottom: 10px; }
   .legend-row {
     display: flex;
     align-items: center;
@@ -150,6 +173,9 @@
     cursor: pointer;
     background: none;
   }
+  @media (max-width: 640px) {
+    #legend-panel { min-width: 0; font-size: 12px; padding: 10px 12px; }
+  }
 </style>
 </head>
 <body>
@@ -158,7 +184,7 @@
 
 <div id="title-panel" class="panel">
   <h1>도시화지역 인구밀도</h1>
-  <p>국토교통부/통계청 도시화지역(2025) 경계·인구 기준. 폴리곤에 마우스를 올리면 해당 도시화지역이 강조되고 시군구명·인구밀도·인구수·면적 라벨이 표시됩니다. 굵은 선은 시도 경계입니다.</p>
+  <p>국토교통부/통계청 도시화지역(2025) 경계·인구 기준. 폴리곤에 마우스를 올리거나(모바일은 탭) 해당 도시화지역이 강조되고 시군구명·인구밀도·인구수·면적 라벨이 표시됩니다. 굵은 선은 시도 경계입니다.</p>
   <a href="index.html">→ 집계구 기초단위 인구밀도 지도</a>
   <a href="urbanization_timeseries.html">→ 도시화지역 시계열(2015~2025)</a>
   <a href="data/exports/도시화지역_인구밀도_시계열.xlsx" download style="display:inline-block;margin-top:4px;font-size:12px;color:#2a78d6;">⬇ 엑셀 다운로드</a>
@@ -166,14 +192,19 @@
 </div>
 
 <div id="legend-panel" class="panel">
-  <div class="legend-title">인구밀도 (명/㎢)</div>
-  <div id="legend-rows"></div>
-  <div id="theme-panel">
-    <div class="theme-title">색상 테마</div>
-    <div id="theme-swatches"></div>
-    <div id="theme-custom">
-      <label for="theme-picker">직접 선택</label>
-      <input type="color" id="theme-picker" value="#e04b3e" />
+  <div id="legend-header">
+    <span class="legend-title">인구밀도 (명/㎢)</span>
+    <button type="button" id="legend-toggle" aria-label="범례 접기/펴기">▾</button>
+  </div>
+  <div id="legend-body">
+    <div id="legend-rows"></div>
+    <div id="theme-panel">
+      <div class="theme-title">색상 테마</div>
+      <div id="theme-swatches"></div>
+      <div id="theme-custom">
+        <label for="theme-picker">직접 선택</label>
+        <input type="color" id="theme-picker" value="#e04b3e" />
+      </div>
     </div>
   </div>
 </div>
@@ -280,6 +311,25 @@
     return isNaN(stored) ? 5 : stored;
   }
 
+  var LEGEND_COLLAPSE_KEY = "ua_density_legend_collapsed";
+
+  function setLegendCollapsed(collapsed) {
+    document.getElementById("legend-panel").classList.toggle("collapsed", collapsed);
+    document.getElementById("legend-toggle").textContent = collapsed ? "▸" : "▾";
+    localStorage.setItem(LEGEND_COLLAPSE_KEY, collapsed ? "1" : "0");
+  }
+
+  function setupLegendToggle() {
+    document.getElementById("legend-toggle").addEventListener("click", function () {
+      setLegendCollapsed(!document.getElementById("legend-panel").classList.contains("collapsed"));
+    });
+    // Default: collapsed on narrow (mobile) screens, expanded on desktop -
+    // unless the user already picked a state, which wins from then on.
+    var stored = localStorage.getItem(LEGEND_COLLAPSE_KEY);
+    var defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
+    setLegendCollapsed(stored !== null ? stored === "1" : defaultCollapsed);
+  }
+
   var map, breaks = null, features = [];
   var baseLayer = [];            // all polygons, built once
   var shapesByFeatureIdx = {};   // featureIdx -> [{polygon, base}, ...] (multi-part features)
@@ -287,6 +337,7 @@
   var currentHoverIdx = null;
   var sidoOutlineLayer = [];     // bold sido boundary lines, built once
   var sidoLabelLayer = [];       // small always-on sido name markers
+  var suppressMapClick = false;  // true for one tick right after a feature tap, so the map's own background-tap handler doesn't immediately hide the label it just showed
 
   function setStatus(text) {
     document.getElementById("status-panel").textContent = text;
@@ -410,6 +461,15 @@
       naver.maps.Event.addListener(polygon, "mouseout", function () {
         onFeatureUnhover(idx);
       });
+      // Touch devices have no hover state, so a tap needs its own handler to
+      // show the same info (mouseover never fires on mobile). suppressMapClick
+      // stops the map's own background-tap handler (added below) from
+      // immediately hiding the label it just showed.
+      naver.maps.Event.addListener(polygon, "click", function (e) {
+        suppressMapClick = true;
+        onFeatureHover(idx, props, e.coord);
+        setTimeout(function () { suppressMapClick = false; }, 0);
+      });
       baseLayer.push(polygon);
     });
   }
@@ -499,6 +559,12 @@
 
     setupThemeControls();
     applyTheme(initialThemeHue(), { persist: false });
+    setupLegendToggle();
+
+    naver.maps.Event.addListener(map, "click", function () {
+      if (suppressMapClick) return;
+      if (currentHoverIdx !== null) onFeatureUnhover(currentHoverIdx);
+    });
 
     Promise.all([
       fetch("data/urbanization_areas.geojson").then(function (r) { return r.json(); }),

@@ -84,10 +84,29 @@
   #period-row button:disabled { opacity: 0.35; cursor: not-allowed; }
   #period-hint { margin-top: 6px; color: var(--text-secondary); font-size: 11.5px; }
 
-  #legend-panel { bottom: 24px; left: 14px; min-width: 190px; }
+  #legend-panel { bottom: 24px; left: 14px; min-width: 190px; max-width: calc(100vw - 28px); box-sizing: border-box; }
   #legend-panel .legend-title { font-weight: 600; margin-bottom: 8px; }
+  #legend-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  #legend-header .legend-title { margin-bottom: 0; }
+  #legend-toggle {
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 6px;
+    width: 24px;
+    height: 24px;
+    line-height: 1;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    flex: none;
+  }
+  #legend-panel.collapsed #legend-body { display: none; }
+  #legend-panel.collapsed { padding-bottom: 10px; }
   .legend-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; color: var(--text-secondary); }
   .legend-swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--border); flex: none; }
+  @media (max-width: 640px) {
+    #legend-panel { min-width: 0; font-size: 12px; padding: 10px 12px; }
+  }
 
   #status-panel { top: 14px; right: 14px; font-size: 12px; color: var(--text-secondary); }
   #loading-bar {
@@ -262,18 +281,23 @@
       <select id="period-select"></select>
       <button type="button" id="period-next">▶</button>
     </div>
-    <div id="period-hint">폴리곤에 마우스를 올리면 시군구명·인구밀도·인구수·면적이 표시됩니다. 색상 구간은 전체 시점 공통(고정)이라 시점 간 비교가 가능합니다.</div>
+    <div id="period-hint">폴리곤에 마우스를 올리거나(모바일은 탭) 시군구명·인구밀도·인구수·면적이 표시됩니다. 색상 구간은 전체 시점 공통(고정)이라 시점 간 비교가 가능합니다.</div>
   </div>
 
   <div id="legend-panel" class="panel">
-    <div class="legend-title">인구밀도 (명/㎢, 전체 시점 공통 구간)</div>
-    <div id="legend-rows"></div>
-    <div id="theme-panel">
-      <div class="theme-title">색상 테마</div>
-      <div id="theme-swatches"></div>
-      <div id="theme-custom">
-        <label for="theme-picker">직접 선택</label>
-        <input type="color" id="theme-picker" value="#e04b3e" />
+    <div id="legend-header">
+      <span class="legend-title">인구밀도 (명/㎢, 전체 시점 공통 구간)</span>
+      <button type="button" id="legend-toggle" aria-label="범례 접기/펴기">▾</button>
+    </div>
+    <div id="legend-body">
+      <div id="legend-rows"></div>
+      <div id="theme-panel">
+        <div class="theme-title">색상 테마</div>
+        <div id="theme-swatches"></div>
+        <div id="theme-custom">
+          <label for="theme-picker">직접 선택</label>
+          <input type="color" id="theme-picker" value="#e04b3e" />
+        </div>
       </div>
     </div>
   </div>
@@ -409,6 +433,25 @@
     return isNaN(stored) ? 5 : stored;
   }
 
+  var LEGEND_COLLAPSE_KEY = "ua_density_legend_collapsed";
+
+  function setLegendCollapsed(collapsed) {
+    document.getElementById("legend-panel").classList.toggle("collapsed", collapsed);
+    document.getElementById("legend-toggle").textContent = collapsed ? "▸" : "▾";
+    localStorage.setItem(LEGEND_COLLAPSE_KEY, collapsed ? "1" : "0");
+  }
+
+  function setupLegendToggle() {
+    document.getElementById("legend-toggle").addEventListener("click", function () {
+      setLegendCollapsed(!document.getElementById("legend-panel").classList.contains("collapsed"));
+    });
+    // Default: collapsed on narrow (mobile) screens, expanded on desktop -
+    // unless the user already picked a state, which wins from then on.
+    var stored = localStorage.getItem(LEGEND_COLLAPSE_KEY);
+    var defaultCollapsed = window.matchMedia("(max-width: 640px)").matches;
+    setLegendCollapsed(stored !== null ? stored === "1" : defaultCollapsed);
+  }
+
   var map, breaks = null, features = [];
   var periods = [];
   var periodIdx = 0;
@@ -419,6 +462,7 @@
   var currentHoverIdx = null;
   var sidoOutlineLayer = [];
   var sidoLabelLayer = [];
+  var suppressMapClick = false;  // true for one tick right after a feature tap, so the map's own background-tap handler doesn't immediately hide the label it just showed
 
   function setStatus(text) { document.getElementById("status-panel").textContent = text; }
   function showLoading(active) { document.getElementById("loading-bar").style.transform = active ? "scaleX(1)" : "scaleX(0)"; }
@@ -518,6 +562,15 @@
       registerShape(idx, polygon, baseOptions);
       naver.maps.Event.addListener(polygon, "mouseover", function (e) { onFeatureHover(idx, props, e.coord); });
       naver.maps.Event.addListener(polygon, "mouseout", function () { onFeatureUnhover(idx); });
+      // Touch devices have no hover state, so a tap needs its own handler to
+      // show the same info (mouseover never fires on mobile). suppressMapClick
+      // stops the map's own background-tap handler (added in initMapReal) from
+      // immediately hiding the label it just showed.
+      naver.maps.Event.addListener(polygon, "click", function (e) {
+        suppressMapClick = true;
+        onFeatureHover(idx, props, e.coord);
+        setTimeout(function () { suppressMapClick = false; }, 0);
+      });
       baseLayer.push(polygon);
     });
   }
@@ -663,6 +716,12 @@
     setupThemeControls();
     applyTheme(initialThemeHue(), { persist: false });
     setupTabs();
+    setupLegendToggle();
+
+    naver.maps.Event.addListener(map, "click", function () {
+      if (suppressMapClick) return;
+      if (currentHoverIdx !== null) onFeatureUnhover(currentHoverIdx);
+    });
 
     Promise.all([
       fetch("data/urbanization_periods.json").then(function (r) { return r.json(); }),
